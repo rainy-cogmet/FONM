@@ -85,18 +85,20 @@ class NeuralSynchronyModel:
             尖峰时间数组
         """
         omega = 2 * np.pi * frequency
-        spike_times = []
+        target_phase = 0  # 目标相位为0（正弦波峰值）
         
-        for t in self.time_points:
-            phase = omega * t
+        # 计算每个周期的峰值时间
+        cycle_times = np.arange(0, self.duration, 1/frequency)
+        
+        spike_times = []
+        for cycle_start in cycle_times:
+            # 在峰值时间附近添加尖峰
+            jitter = (np.random.rand() - 0.5) * 0.5 / frequency  # ±半个周期的抖动
+            spike_time = cycle_start + jitter
             
-            # 计算尖峰概率：与目标相位越接近，概率越高
-            target_phase = 0  # 目标相位为0（正弦波峰值）
-            phase_diff = abs((phase - target_phase) % (2 * np.pi))
-            probability = phase_lock * np.cos(phase_diff) + (1 - phase_lock) * np.random.rand()
-            
-            if probability > 0.8:  # 尖峰产生阈值
-                spike_times.append(t)
+            # 根据相位锁定强度决定是否添加尖峰
+            if np.random.rand() < phase_lock:
+                spike_times.append(spike_time)
         
         return np.array(spike_times)
     
@@ -113,32 +115,29 @@ class NeuralSynchronyModel:
             gamma_response: 伽马检测器神经元的响应
             high_gamma_response: 高伽马检测器神经元的响应
         """
-        gamma_response = []
-        high_gamma_response = []
+        gamma_response = np.zeros_like(self.time_points)
+        high_gamma_response = np.zeros_like(self.time_points)
         
         # 生成输入尖峰序列
         mt_spikes = self.generate_spike_train(200, phase_lock_strength) if mt_input else np.array([])
         v4_spikes = self.generate_spike_train(55, phase_lock_strength) if v4_input else np.array([])
         
-        # 合并所有输入尖峰
-        all_spikes = np.concatenate([mt_spikes, v4_spikes])
+        # 优化响应计算：只在尖峰时间附近检查
+        for spike_time in v4_spikes:
+            # 找到尖峰时间附近的时间点索引
+            idx = np.abs(self.time_points - spike_time).argmin()
+            # 检查前后2ms的窗口
+            window = slice(max(0, idx-2), min(len(self.time_points), idx+3))
+            for i, t in enumerate(self.time_points[window]):
+                gamma_response[window.start + i] += self.gamma_neuron.receive_spike(spike_time, t)
         
-        # 模拟每个时间点的神经元响应
-        for t in self.time_points:
-            # 伽马检测器神经元对V4输入的响应
-            gamma_resp = 0
-            for spike_time in v4_spikes:
-                gamma_resp += self.gamma_neuron.receive_spike(spike_time, t)
-            
-            # 高伽马检测器神经元对MT输入的响应
-            high_gamma_resp = 0
-            for spike_time in mt_spikes:
-                high_gamma_resp += self.high_gamma_neuron.receive_spike(spike_time, t)
-            
-            gamma_response.append(gamma_resp)
-            high_gamma_response.append(high_gamma_resp)
+        for spike_time in mt_spikes:
+            idx = np.abs(self.time_points - spike_time).argmin()
+            window = slice(max(0, idx-2), min(len(self.time_points), idx+3))
+            for i, t in enumerate(self.time_points[window]):
+                high_gamma_response[window.start + i] += self.high_gamma_neuron.receive_spike(spike_time, t)
         
-        return np.array(gamma_response), np.array(high_gamma_response)
+        return gamma_response, high_gamma_response
     
     def evaluate_performance(self, thresholds=np.arange(0.5, 1.0, 0.1), phase_locks=np.arange(0.5, 1.0, 0.1)):
         """
@@ -201,6 +200,133 @@ class NeuralSynchronyModel:
         
         return results
 
+def plot_fig4d(model):
+    """
+    绘制论文中的Figure 4D
+    """
+    print("\nPlotting Figure 4D...")
+    
+    # 四种条件
+    conditions = [
+        (True, False, "MT only"),
+        (False, True, "V4 only"),
+        (True, True, "Both"),
+        (False, False, "None")
+    ]
+    
+    gamma_rates = []
+    high_gamma_rates = []
+    labels = []
+    
+    # 为每个条件生成数据
+    for mt_input, v4_input, label in conditions:
+        gamma_resp, high_gamma_resp = model.simulate(mt_input, v4_input, phase_lock_strength=0.8)
+        
+        # 计算响应率
+        gamma_rate = np.sum(gamma_resp) / model.duration
+        high_gamma_rate = np.sum(high_gamma_resp) / model.duration
+        
+        gamma_rates.append(gamma_rate)
+        high_gamma_rates.append(high_gamma_rate)
+        labels.append(label)
+    
+    # 绘制散点图
+    plt.figure(figsize=(8, 6))
+    colors = ['blue', 'red', 'green', 'gray']
+    
+    for i, (gamma_rate, high_gamma_rate, label, color) in enumerate(zip(gamma_rates, high_gamma_rates, labels, colors)):
+        plt.scatter(gamma_rate, high_gamma_rate, s=200, color=color, label=label, alpha=0.7)
+    
+    plt.xlabel('Gamma detector neuron response rate (spikes/s)')
+    plt.ylabel('High-gamma detector neuron response rate (spikes/s)')
+    plt.title('Figure 4D: Response patterns for different input conditions')
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('figure_4d.png', dpi=300, bbox_inches='tight')
+    print("Figure 4D saved to figure_4d.png")
+    
+    return gamma_rates, high_gamma_rates, labels
+
+def plot_fig4e(model):
+    """
+    绘制论文中的Figure 4E
+    """
+    print("\nPlotting Figure 4E...")
+    
+    # 不同的阈值和相位锁定强度
+    thresholds = np.arange(0.5, 1.0, 0.05)
+    phase_locks = np.arange(0.5, 1.0, 0.1)
+    
+    # 存储准确率
+    accuracy_matrix = np.zeros((len(thresholds), len(phase_locks)))
+    
+    # 评估每个参数组合的性能
+    for i, threshold in enumerate(thresholds):
+        for j, phase_lock in enumerate(phase_locks):
+            # 设置神经元阈值
+            model.gamma_neuron.threshold = threshold
+            model.high_gamma_neuron.threshold = threshold
+            
+            # 生成训练数据
+            X = []
+            y = []
+            
+            conditions = [
+                (True, False, "MT only"),
+                (False, True, "V4 only"),
+                (True, True, "Both"),
+                (False, False, "None")
+            ]
+            
+            for mt_input, v4_input, label in conditions:
+                for _ in range(20):  # 每个条件生成20个样本
+                    gamma_resp, high_gamma_resp = model.simulate(mt_input, v4_input, phase_lock)
+                    
+                    # 计算响应率
+                    gamma_rate = np.sum(gamma_resp) / model.duration
+                    high_gamma_rate = np.sum(high_gamma_resp) / model.duration
+                    
+                    X.append([gamma_rate, high_gamma_rate])
+                    y.append(label)
+            
+            # 训练SVM分类器
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
+            clf = SVC(kernel='rbf')
+            clf.fit(X_train, y_train)
+            
+            # 预测并计算准确率
+            y_pred = clf.predict(X_test)
+            accuracy = accuracy_score(y_test, y_pred)
+            
+            accuracy_matrix[i, j] = accuracy
+    
+    # 绘制热力图
+    plt.figure(figsize=(10, 6))
+    im = plt.imshow(accuracy_matrix, extent=[0.5, 0.9, 0.9, 0.5], 
+                    aspect='auto', cmap='viridis', vmin=0.7, vmax=1.0)
+    
+    # 添加颜色条
+    cbar = plt.colorbar(im)
+    cbar.set_label('Classification accuracy')
+    
+    # 设置坐标轴标签
+    plt.xlabel('Phase lock strength')
+    plt.ylabel('Neuron threshold')
+    plt.title('Figure 4E: Classification accuracy across parameter space')
+    
+    # 添加数值标签
+    for i in range(len(thresholds)):
+        for j in range(len(phase_locks)):
+            plt.text(phase_locks[j], thresholds[i], f'{accuracy_matrix[i, j]:.2f}',
+                    ha='center', va='center', color='white', fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig('figure_4e.png', dpi=300)
+    print("Figure 4E saved to figure_4e.png")
+    
+    return accuracy_matrix
+
 def main():
     """
     主函数，运行模型示例
@@ -233,13 +359,21 @@ def main():
     plt.savefig('simulation_results.png')
     print("Simulation results saved to simulation_results.png")
     
-    # 评估模型性能
-    print("\nEvaluating model performance...")
-    results = model.evaluate_performance()
+    # 绘制Figure 4D
+    gamma_rates, high_gamma_rates, labels = plot_fig4d(model)
     
-    # 保存评估结果
-    np.savez('performance_results.npz', results=results)
-    print("Performance results saved to performance_results.npz")
+    # 绘制Figure 4E
+    accuracy_matrix = plot_fig4e(model)
+    
+    # 保存数据
+    np.savez('figure_data.npz', 
+             gamma_rates=gamma_rates,
+             high_gamma_rates=high_gamma_rates,
+             labels=labels,
+             accuracy_matrix=accuracy_matrix)
+    print("\nAll figure data saved to figure_data.npz")
+    
+    print("\nDone!")
 
 if __name__ == "__main__":
     main()
