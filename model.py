@@ -158,12 +158,14 @@ class NeuralSynchronyModel:
                 self.gamma_neuron.threshold = threshold
                 self.high_gamma_neuron.threshold = threshold
                 
-                # 四种条件：仅MT, 仅V4, 两者都有, 两者都没有
+                # 六种条件：仅MT, 仅V4, 两者都有, 两者都没有, MT强V4弱, MT弱V4强
                 conditions = [
                     (True, False, "MT only"),
                     (False, True, "V4 only"),
                     (True, True, "Both"),
-                    (False, False, "None")
+                    (False, False, "None"),
+                    (True, 0.5, "MT strong V4 weak"),
+                    (0.5, True, "MT weak V4 strong")
                 ]
                 
                 X = []
