@@ -1,0 +1,300 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+基于BrainPy的相位-振幅耦合（PAC）模型 - V2版本
+直接在输入端提供振荡的刺激强度，符合BrainPy编程范式
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import brainpy as bp
+import brainpy.math as bm
+
+class SimpleNeuron(bp.DynamicalSystem):
+    """
+    简单的神经元模型，包含基本的输入输出功能
+    """
+    def __init__(self):
+        super().__init__()
+        self.neuron = bp.neurons.Izhikevich(size=1, a=0.02, b=0.2, c=-65., d=6.)
+        self.neuron.V_rest = -60.
+        self.neuron.V_th = -40.
+        
+        # 暴露神经元的spike属性
+        self.spike = self.neuron.spike
+        self.V = self.neuron.V
+    
+    def update(self, input_current):
+        """
+        更新模型状态
+        
+        参数:
+            input_current: 输入电流
+            
+        返回:
+            spike: 神经元是否产生动作电位
+        """
+        self.neuron.update(input_current)
+        return self.neuron.spike
+
+def generate_pac_stimulus(base_freq, coupling_freq, coupling_strength=0.7, duration=1000.):
+    """
+    生成相位-振幅耦合的刺激信号
+    
+    参数:
+        base_freq: 基础频率（低频相位调制信号）
+        coupling_freq: 耦合频率（高频振幅调制信号）
+        coupling_strength: 耦合强度
+        duration: 刺激持续时间（ms）
+        
+    返回:
+        stimulus: 刺激信号
+        time_points: 时间点数组
+    """
+    time_points = np.arange(0, duration, 1.)
+    
+    # 基础频率相位信号
+    base_phase = 2 * np.pi * base_freq * time_points / 1000.
+    
+    # 耦合频率振幅信号
+    coupling_amplitude = 1.0 + coupling_strength * np.cos(base_phase)
+    coupling_amplitude = np.clip(coupling_amplitude, 0.1, 2.0)
+    
+    # 生成PAC刺激信号
+    stimulus = coupling_amplitude * np.sin(2 * np.pi * coupling_freq * time_points / 1000.)
+    
+    return stimulus, time_points
+
+def generate_combined_stimulus(frequencies, amplitudes, duration=1000.):
+    """
+    生成多频率叠加的刺激信号
+    
+    参数:
+        frequencies: 频率列表
+        amplitudes: 振幅列表
+        duration: 刺激持续时间（ms）
+        
+    返回:
+        stimulus: 刺激信号
+        time_points: 时间点数组
+    """
+    time_points = np.arange(0, duration, 1.)
+    stimulus = np.zeros_like(time_points)
+    
+    for freq, amp in zip(frequencies, amplitudes):
+        stimulus += amp * np.sin(2 * np.pi * freq * time_points / 1000.)
+    
+    return stimulus, time_points
+
+def calculate_plv(membrane_potentials, stimulus):
+    """
+    计算相位锁定值
+    """
+    from scipy.signal import hilbert
+    
+    # 计算解析信号
+    analytic1 = hilbert(membrane_potentials)
+    analytic2 = hilbert(stimulus)
+    
+    # 计算瞬时相位
+    phase1 = np.angle(analytic1)
+    phase2 = np.angle(analytic2)
+    
+    # 计算相位差
+    phase_diff = phase1 - phase2
+    
+    # 计算PLV
+    plv = np.abs(np.mean(np.exp(1j * phase_diff)))
+    
+    return plv
+
+def decode_10hz_signal(membrane_potentials, threshold=0.5):
+    """
+    专用10Hz解码模块
+    """
+    from scipy.signal import hilbert, find_peaks
+    
+    # 计算膜电位的振幅包络
+    analytic_signal = hilbert(membrane_potentials)
+    amplitude_envelope = np.abs(analytic_signal)
+    
+    # 找到超过阈值的时间点
+    above_threshold = amplitude_envelope > threshold
+    
+    # 计算相邻超过阈值事件的时间间隔
+    rising_edges = np.where(np.diff(above_threshold.astype(int)) == 1)[0] + 1
+    
+    # 计算相邻脉冲的时间间隔
+    if len(rising_edges) >= 2:
+        time_intervals = np.diff(rising_edges)
+        
+        # 计算预期的10Hz间隔（100ms）
+        expected_interval = 100.0
+        
+        # 检测符合10Hz间隔的脉冲
+        valid_pulses = np.where(np.abs(time_intervals - expected_interval) < 20.0)[0]
+        
+        # 计算解码成功率
+        decoding_ratio = len(valid_pulses) / len(time_intervals) if len(time_intervals) > 0 else 0
+        decoding_success = decoding_ratio > 0.7  # 超过70%的脉冲符合10Hz间隔则判定为成功
+        
+        return decoding_success, len(rising_edges), decoding_ratio
+    else:
+        return False, len(rising_edges), 0.0
+
+def run_experiment():
+    """
+    运行PAC实验
+    """
+    print("=== 运行BrainPy PAC模型实验（V2版本） ===")
+    print("直接在输入端提供振荡的刺激强度")
+    
+    # 创建模型
+    model = SimpleNeuron()
+    
+    # --------------------------
+    # 条件a：10Hz纯节律刺激
+    # --------------------------
+    print("\n--- 条件a：10Hz纯节律刺激 ---")
+    
+    # 生成刺激：10Hz纯节律
+    stimulus_a, time_points = generate_combined_stimulus(
+        frequencies=[10],
+        amplitudes=[200.0],  # 大幅增加刺激强度
+        duration=1000.
+    )
+    
+    # 运行模拟
+    runner = bp.DSRunner(model, monitors=['spike', 'V'], jit=True)
+    runner.run(inputs=stimulus_a)
+    
+    # 计算PLV
+    plv_a = calculate_plv(runner.mon['V'], stimulus_a)
+    
+    # 解码
+    decode_success_a, pulse_count_a, decode_ratio_a = decode_10hz_signal(runner.mon['V'])
+    
+    print(f"PLV值: {plv_a:.3f}")
+    print(f"脉冲数: {pulse_count_a}")
+    print(f"专用10Hz解码: {'成功' if decode_success_a else '失败'} (成功率: {decode_ratio_a:.3f})")
+    
+    # 绘制结果
+    plt.figure(figsize=(12, 6))
+    plt.subplot(211)
+    plt.plot(time_points, stimulus_a, label='10Hz Stimulus', alpha=0.7)
+    plt.title('Condition a: 10Hz Rhythmic Stimulus')
+    plt.ylabel('Input Current')
+    plt.legend()
+    
+    plt.subplot(212)
+    plt.plot(time_points, runner.mon['V'], label='Membrane Potential', alpha=0.7, color='red')
+    spikes = time_points[runner.mon['spike'].flatten() > 0.5]
+    plt.scatter(spikes, np.ones_like(spikes)*50, marker='|', s=200, c='black', label='Spike')
+    plt.xlabel('Time (ms)')
+    plt.ylabel('Membrane Potential (mV)')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig('brainpy_pac_condition_a.png', dpi=300)
+    print("条件a结果图已保存为: brainpy_pac_condition_a.png")
+    
+    # --------------------------
+    # 条件b：10Hz相位调制3Hz振幅
+    # --------------------------
+    print("\n--- 条件b：10Hz相位调制3Hz振幅 ---")
+    
+    # 生成PAC刺激：10Hz相位调制3Hz振幅
+    stimulus_b, time_points = generate_pac_stimulus(
+        base_freq=10,
+        coupling_freq=3,
+        coupling_strength=0.7,
+        duration=1000.
+    )
+    
+    # 增加刺激强度
+    stimulus_b *= 200.0
+    
+    # 重置模型
+    model.neuron.reset()
+    
+    # 运行模拟
+    runner = bp.DSRunner(model, monitors=['spike', 'V'], jit=True)
+    runner.run(inputs=stimulus_b)
+    
+    # 计算PLV
+    plv_b = calculate_plv(runner.mon['V'], stimulus_b)
+    
+    # 解码
+    decode_success_b, pulse_count_b, decode_ratio_b = decode_10hz_signal(runner.mon['V'])
+    
+    print(f"PLV值: {plv_b:.3f}")
+    print(f"脉冲数: {pulse_count_b}")
+    print(f"专用10Hz解码: {'成功' if decode_success_b else '失败'} (成功率: {decode_ratio_b:.3f})")
+    
+    # 绘制结果
+    plt.figure(figsize=(12, 6))
+    plt.subplot(211)
+    plt.plot(time_points, stimulus_b, label='PAC Stimulus (10Hz phase modulates 3Hz amplitude)', alpha=0.7)
+    plt.title('Condition b: Phase-Amplitude Coupling Stimulus')
+    plt.ylabel('Input Current')
+    plt.legend()
+    
+    plt.subplot(212)
+    plt.plot(time_points, runner.mon['V'], label='Membrane Potential', alpha=0.7, color='red')
+    spikes_b = time_points[runner.mon['spike'].flatten() > 0.5]
+    plt.scatter(spikes_b, np.ones_like(spikes_b)*50, marker='|', s=200, c='black', label='Spike')
+    plt.xlabel('Time (ms)')
+    plt.ylabel('Membrane Potential (mV)')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig('brainpy_pac_condition_b.png', dpi=300)
+    print("条件b结果图已保存为: brainpy_pac_condition_b.png")
+    
+    # --------------------------
+    # 绘制对比柱状图
+    # --------------------------
+    print("\n--- 绘制对比柱状图 ---")
+    
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    
+    # PLV对比
+    plv_values = [plv_a, plv_b]
+    axes[0].bar(['Condition a', 'Condition b'], plv_values, color=['blue', 'orange'])
+    axes[0].set_title('Phase Locking Value (PLV) Comparison')
+    axes[0].set_ylabel('PLV (0-1)')
+    axes[0].set_ylim(0, 1)
+    for i, v in enumerate(plv_values):
+        axes[0].text(i, v + 0.02, f'{v:.3f}', ha='center', va='bottom')
+    
+    # 脉冲数对比
+    pulse_counts = [pulse_count_a, pulse_count_b]
+    axes[1].bar(['Condition a', 'Condition b'], pulse_counts, color=['blue', 'orange'])
+    axes[1].set_title('Number of Spikes')
+    axes[1].set_ylabel('Number of spikes')
+    axes[1].set_ylim(0, max(pulse_counts)*1.2 if pulse_counts else 10)
+    for i, v in enumerate(pulse_counts):
+        axes[1].text(i, v + 0.5, f'{v:d}', ha='center', va='bottom')
+    
+    # 解码成功率对比
+    decode_ratios = [decode_ratio_a, decode_ratio_b]
+    axes[2].bar(['Condition a', 'Condition b'], decode_ratios, color=['blue', 'orange'])
+    axes[2].set_title('10Hz Decoding Success Rate')
+    axes[2].set_ylabel('Success Rate (0-1)')
+    axes[2].set_ylim(0, 1)
+    for i, v in enumerate(decode_ratios):
+        axes[2].text(i, v + 0.02, f'{v:.3f}', ha='center', va='bottom')
+    
+    plt.tight_layout()
+    plt.savefig('brainpy_pac_comparison_v2.png', dpi=300)
+    print("对比柱状图已保存为: brainpy_pac_comparison_v2.png")
+    
+    print("\n=== 实验完成 ===")
+    return runner
+
+def main():
+    """
+    主函数
+    """
+    runner = run_experiment()
+
+if __name__ == "__main__":
+    main()

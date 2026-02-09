@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+ENV/
+
+# Data
+*.npz
+*.csv
+*.dat
+
+# Images
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Zip files
+*.zip
+*.tar.gz
+*.rar
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+*.txt

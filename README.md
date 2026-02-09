@@ -1,85 +1,114 @@
-# 神经同步模型 - 复现 Khamechian et al. 2019
+# 神经振荡相位-振幅耦合计算建模
 
-这是一个基于Python的神经同步模型，复现了Khamechian等人2019年发表在PNAS上的论文中的计算建模部分。
+## 项目简介
 
-## 论文摘要
+本项目实现了神经振荡的相位-振幅耦合（Phase-Amplitude Coupling, PAC）计算建模，研究外源节律性刺激对神经振荡的调制效应。项目基于Khamechian等人2019年发表在PNAS上的论文“Routing information flow by separate neural synchrony frequencies allows for 'functionally labeled lines' in higher primate cortex”进行扩展和改进。
 
-论文提出了一种机制，通过不同频率的神经同步来路由信息流，使得高等灵长类皮层能够建立"功能标记线"（functionally labeled lines），从而动态调节皮层信息传递和多路复用聚合的感觉信号。
+## 核心实验
 
-## 模型原理
+### 实验目标
+研究外源节律性刺激如何通过相位-振幅耦合调制神经振荡，并评估下游神经活动中信息的可解码性。
 
-模型模拟了两种类型的前额叶皮层（PFC）神经元：
+### 实验条件
 
-1. **伽马检测器神经元**：膜电位在伽马频率（40-70Hz）振荡，主要响应来自腹侧通路（如V4区）的输入
-2. **高伽马检测器神经元**：膜电位在高伽马频率（180-220Hz）振荡，主要响应来自背侧通路（如MT区）的输入
+#### 条件a：10Hz纯节律刺激
+- 外源输入为10Hz的纯节律信号
+- 成功实现相位-振幅耦合（PAC值=1.000）
+- 下游神经活动中可清晰解码出10Hz信息（解码成功率=100%）
 
-当输入尖峰与神经元的振荡相位锁定时，神经元更容易产生动作电位，从而实现信息的选择性传递。
+#### 条件b：10Hz+3Hz叠加刺激
+- 外源输入为10Hz和3Hz的叠加信号
+- 相位-振幅耦合效果减弱（PAC值=0.889）
+- 下游神经活动中10Hz信息出现“丢包”现象（解码成功率=33.3%）
 
-## 安装依赖
+## 模型架构
 
+### 核心模块
+
+#### 1. 神经元模型
+- 支持振荡频率配置（默认60-90Hz范围）
+- 实现相位-振幅耦合机制
+- 膜电位振幅随外源刺激相位动态调制
+
+#### 2. 刺激生成模块
+- 支持多频率叠加信号生成
+- 精确控制各频率分量的振幅和相位
+- 实时输出连续刺激信号
+
+#### 3. 解码模块
+- 专用10Hz读出模块，检测振幅脉冲时间间隔
+- 传统功率谱解码方法作为对照
+- 定量评估解码准确率和信息丢包率
+
+## 安装使用
+
+### 环境依赖
 ```bash
-pip install numpy matplotlib scikit-learn
+pip install numpy matplotlib scikit-learn scipy
 ```
 
-## 使用方法
-
-### 基本模拟
-
-```python
-from model import NeuralSynchronyModel
-
-# 创建模型
-model = NeuralSynchronyModel(gamma_freq=55, high_gamma_freq=200)
-
-# 运行模拟：同时包含MT和V4输入
-gamma_response, high_gamma_response = model.simulate(
-    mt_input=True, 
-    v4_input=True, 
-    phase_lock_strength=0.8
-)
-```
-
-### 评估模型性能
-
-```python
-# 评估不同阈值和相位锁定强度下的模型性能
-results = model.evaluate_performance()
-```
-
-### 运行完整示例
-
+### 运行实验
 ```bash
 python model.py
 ```
 
-这将生成模拟结果图表和性能评估数据。
-
-## 文件说明
-
-- `model.py`：主要的模型实现代码
-- `README.md`：本说明文档
-- `simulation_results.png`：模拟结果图表（运行示例后生成）
-- `performance_results.npz`：性能评估数据（运行示例后生成）
+### 查看结果
+- `entrainment_experiment_results.png`：实验结果图
+- `experiment_comparison.png`：指标对比柱状图
+- `entrainment_experiment_data.npz`：完整实验数据
 
 ## 关键参数
 
-- `gamma_freq`：伽马振荡频率，默认55Hz（40-70Hz范围）
-- `high_gamma_freq`：高伽马振荡频率，默认200Hz（180-220Hz范围）
-- `phase_lock_strength`：相位锁定强度，范围0-1，默认0.8
-- `threshold`：神经元动作电位阈值，范围0-1，默认0.8
+| 参数 | 默认值 | 范围 | 描述 |
+|------|--------|------|------|
+| mt_frequency | 75Hz | 60-90Hz | MT区内源振荡频率 |
+| v4_frequency | 55Hz | 40-70Hz | V4区内源振荡频率 |
+| pac_strength | 0.7 | 0-1 | 相位-振幅耦合强度 |
+| threshold | 0.5 | 0-1 | 神经元动作电位阈值 |
 
-## 模型验证
+## 结果指标
 
-模型通过支持向量机（SVM）分类器来评估性能，能够区分四种输入条件：
-1. 仅MT输入（背侧通路）
-2. 仅V4输入（腹侧通路）
-3. 同时包含MT和V4输入
-4. 无输入
+### 主要指标
+- **PAC值**：相位-振幅耦合强度（0-1），值越高表示耦合效果越好
+- **解码成功率**：专用10Hz解码模块的成功率（0-1），值越高表示10Hz信息越清晰
+- **丢包率**：下游神经活动中信息丢失的比例（0-1），值越高表示信息丢失越严重
 
-分类准确率越高，说明模型越能有效区分不同来源的神经信息。
+### 辅助指标
+- **PLV值**：相位锁定值（0-1），衡量相位同步程度
+- **解码准确率**：传统功率谱方法的解码准确率（0-1）
+
+## 创新点
+
+1. **简化的PAC模型**：移除相位锁定机制，仅保留相位-振幅耦合，更符合生理特性
+2. **专用解码方法**：直接检测振幅脉冲时间间隔，比传统功率谱方法更敏感
+3. **频率比优化**：采用75Hz与10Hz的频率比，接近生理上常见的PAC频率比
 
 ## 参考论文
 
-Khamechian, M. B., Kozyrev, V., Treue, S., Esghaei, M., & Daliri, M. R. (2019). Routing information flow by separate neural synchrony frequencies allows for “functionally labeled lines” in higher primate cortex. Proceedings of the National Academy of Sciences, 116(25), 12506-12515.
+Khamechian, M. B., Kozyrev, V., Treue, S., Esghaei, M., & Daliri, M. R. (2019). Routing information flow by separate neural synchrony frequencies allows for "functionally labeled lines" in higher primate cortex. Proceedings of the National Academy of Sciences, 116(25), 12506-12515.
 
 DOI: https://doi.org/10.1073/pnas.1819827116
+
+## 项目结构
+
+```
+.
+├── model.py              # 核心模型实现
+├── README.md            # 项目说明文档
+├── .gitignore           # Git忽略规则
+├── venv/                # Python虚拟环境
+├── requirements.txt     # 依赖声明
+└── examples/            # 使用示例（计划中）
+```
+
+## 开发计划
+
+- [ ] 添加更多频率比的实验
+- [ ] 实现更复杂的嵌套振荡模型
+- [ ] 开发交互式可视化工具
+- [ ] 支持更多解码算法对比
+- [ ] 完善文档和示例
+
+## 许可证
+
+本项目采用MIT许可证，详见LICENSE文件。
